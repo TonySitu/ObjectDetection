@@ -1,3 +1,4 @@
+import tensorflow as tf
 # -*- coding: utf-8 -*-
 """
 Class definition of YOLO_v3 style detection model on image and video
@@ -8,15 +9,18 @@ import os
 from timeit import default_timer as timer
 
 import numpy as np
-from keras import backend as K
-from keras.models import load_model
-from keras.layers import Input
+from tensorflow.keras import backend as K
+from tensorflow.keras.models import load_model
+from tensorflow.keras.layers import Input
 from PIL import Image, ImageFont, ImageDraw
 
 from yolo3.model import yolo_eval, yolo_body, tiny_yolo_body
 from yolo3.utils import letterbox_image
 import os
-from keras.utils import multi_gpu_model
+try:
+    from keras.utils import multi_gpu_model
+except ImportError:
+    multi_gpu_model = None
 
 class YOLO(object):
     _defaults = {
@@ -41,8 +45,8 @@ class YOLO(object):
         self.__dict__.update(kwargs) # and update with user overrides
         self.class_names = self._get_class()
         self.anchors = self._get_anchors()
-        self.sess = K.get_session()
-        self.boxes, self.scores, self.classes = self.generate()
+        # self.sess = K.get_session()  # Not needed in TF 2.x
+        self.generate()
 
     def _get_class(self):
         classes_path = os.path.expanduser(self.classes_path)
@@ -73,7 +77,7 @@ class YOLO(object):
                 if is_tiny_version else yolo_body(Input(shape=(None,None,3)), num_anchors//3, num_classes)
             self.yolo_model.load_weights(self.model_path) # make sure model, anchors and classes match
         else:
-            assert self.yolo_model.layers[-1].output_shape[-1] == \
+            assert self.yolo_model.layers[-1].output.shape[-1] == \
                 num_anchors/len(self.yolo_model.output) * (num_classes + 5), \
                 'Mismatch between model and given anchor and class sizes'
 
@@ -91,13 +95,7 @@ class YOLO(object):
         np.random.seed(None)  # Reset seed to default.
 
         # Generate output tensor targets for filtered bounding boxes.
-        self.input_image_shape = K.placeholder(shape=(2, ))
-        if self.gpu_num>=2:
-            self.yolo_model = multi_gpu_model(self.yolo_model, gpus=self.gpu_num)
-        boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors,
-                len(self.class_names), self.input_image_shape,
-                score_threshold=self.score, iou_threshold=self.iou)
-        return boxes, scores, classes
+        return None, None, None
 
     def detect_image(self, image):
         start = timer()
@@ -116,13 +114,24 @@ class YOLO(object):
         image_data /= 255.
         image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
 
-        out_boxes, out_scores, out_classes = self.sess.run(
-            [self.boxes, self.scores, self.classes],
-            feed_dict={
-                self.yolo_model.input: image_data,
-                self.input_image_shape: [image.size[1], image.size[0]],
-                K.learning_phase(): 0
-            })
+        # Use model.predict() instead of sess.run() for TF 2.x
+        yolo_outputs = self.yolo_model.predict(image_data)
+        
+        # Perform yolo_eval in eager mode
+        out_boxes, out_scores, out_classes = yolo_eval(
+            yolo_outputs, 
+            self.anchors,
+            len(self.class_names), 
+            [image.size[1], image.size[0]],
+            score_threshold=self.score, 
+            iou_threshold=self.iou
+        )
+        
+        # Convert to numpy if needed
+        if hasattr(out_boxes, 'numpy'):
+            out_boxes = out_boxes.numpy()
+            out_scores = out_scores.numpy()
+            out_classes = out_classes.numpy()
 
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
 
@@ -137,7 +146,7 @@ class YOLO(object):
 
             label = '{} {:.2f}'.format(predicted_class, score)
             draw = ImageDraw.Draw(image)
-            label_size = draw.textsize(label, font)
+            label_size = draw.textbbox((0, 0), label, font=font)[2:]
 
             top, left, bottom, right = box
             top = max(0, np.floor(top + 0.5).astype('int32'))
@@ -151,7 +160,6 @@ class YOLO(object):
             else:
                 text_origin = np.array([left, top + 1])
 
-            # My kingdom for a good redistributable image drawing library.
             for i in range(thickness):
                 draw.rectangle(
                     [left + i, top + i, right - i, bottom - i],
@@ -167,7 +175,10 @@ class YOLO(object):
         return image
 
     def close_session(self):
-        self.sess.close()
+        K.clear_session()
+
+    def close_session(self):
+        K.clear_session()
 
 def detect_video(yolo, video_path, output_path=""):
     import cv2
