@@ -177,10 +177,10 @@ def main():
     # CONFIGURATION - UPDATE THESE PATHS
 
     # Path to your trained model
-    model_path = r"C:\Users\Tony\Desktop\ObjectDetection\runs\detect\runs\train\prayer6\weights\best.pt"
+    model_path = r"D:\ObjectDetection\runs\train\test_model_8\weights\best.pt"
 
     # Path to your test video
-    video_path = r"C:\Users\Tony\Downloads\airport highway.mp4"
+    video_path = r"C:\Users\Tony\Downloads\g test.mp4"
 
     # Output video path (None = auto generate)
     output_path = None
@@ -226,7 +226,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Install required packages if needed
     try:
         from ultralytics import YOLO
         import cv2

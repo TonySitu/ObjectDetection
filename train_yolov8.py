@@ -8,6 +8,14 @@ import os
 os.environ['PYTHONHASHSEED'] = '0'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['TORCH_HOME'] = r'D:\torch_cache'
+os.environ['HF_HOME'] = r'D:\hf_cache'
+os.environ['TEMP'] = r'D:\temp'
+os.environ['TMP'] = r'D:\temp'
+
+# Create directories
+os.makedirs(r'D:\torch_cache', exist_ok=True)
+os.makedirs(r'D:\temp', exist_ok=True)
 
 from ultralytics import YOLO
 import os
@@ -188,6 +196,7 @@ def train_yolov8_augmented(
 
     results = model.train(
         data=data_yaml_path,
+        val=False,
         epochs=epochs,
         imgsz=imgsz,
         batch=batch_size,
@@ -227,7 +236,6 @@ def train_yolov8_augmented(
         warmup_bias_lr=0.1,
 
         # Validation
-        val=True,
         plots=True,
 
         # Other
