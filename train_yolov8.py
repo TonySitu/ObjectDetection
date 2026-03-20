@@ -1,25 +1,154 @@
 """
-YOLOv8 Training Script for MTSD Traffic Sign Dataset
-Train a YOLOv8 model on your organized YOLO dataset
+YOLOv8 Training Script for Augmented Traffic Sign Dataset
+Train a new YOLOv8 model on your augmented realistic dataset
 """
+
+# Fix for Windows multiprocessing memory issues
+import os
+os.environ['PYTHONHASHSEED'] = '0'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
 
 from ultralytics import YOLO
 import os
 from pathlib import Path
+import yaml
+import shutil
+import random
 
-def train_yolov8_mtsd(
+
+def split_dataset(dataset_dir, train_ratio=0.8):
+    """
+    Split dataset into train and val sets
+
+    Args:
+        dataset_dir: Path to dataset (contains images/ and labels/ folders)
+        train_ratio: Ratio of training data (0.8 = 80% train, 20% val)
+    """
+
+    print("=" * 70)
+    print("SPLITTING DATASET INTO TRAIN/VAL")
+    print("=" * 70)
+
+    images_dir = Path(dataset_dir) / 'images'
+    labels_dir = Path(dataset_dir) / 'labels'
+
+    # Create train/val directories
+    train_images_dir = Path(dataset_dir) / 'train' / 'images'
+    train_labels_dir = Path(dataset_dir) / 'train' / 'labels'
+    val_images_dir = Path(dataset_dir) / 'val' / 'images'
+    val_labels_dir = Path(dataset_dir) / 'val' / 'labels'
+
+    for d in [train_images_dir, train_labels_dir, val_images_dir, val_labels_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Get all image files
+    image_files = list(images_dir.glob('*.jpg')) + list(images_dir.glob('*.png'))
+
+    if not image_files:
+        print("❌ No images found!")
+        return False
+
+    print(f"📊 Found {len(image_files)} images")
+
+    # Shuffle
+    random.shuffle(image_files)
+
+    # Split
+    train_count = int(len(image_files) * train_ratio)
+    train_files = image_files[:train_count]
+    val_files = image_files[train_count:]
+
+    print(f"📦 Train: {len(train_files)} images")
+    print(f"📦 Val: {len(val_files)} images")
+
+    # Copy files
+    print("\n🔄 Copying files...")
+
+    for i, img_file in enumerate(train_files):
+        if (i + 1) % 500 == 0:
+            print(f"  Train: {i + 1}/{len(train_files)}")
+
+        # Copy image
+        shutil.copy2(img_file, train_images_dir / img_file.name)
+
+        # Copy label
+        label_file = labels_dir / (img_file.stem + '.txt')
+        if label_file.exists():
+            shutil.copy2(label_file, train_labels_dir / label_file.name)
+
+    for i, img_file in enumerate(val_files):
+        if (i + 1) % 500 == 0:
+            print(f"  Val: {i + 1}/{len(val_files)}")
+
+        shutil.copy2(img_file, val_images_dir / img_file.name)
+
+        label_file = labels_dir / (img_file.stem + '.txt')
+        if label_file.exists():
+            shutil.copy2(label_file, val_labels_dir / label_file.name)
+
+    print("✅ Split complete!")
+    return True
+
+
+def create_data_yaml(dataset_dir, signs_pngs_dir):
+    """
+    Create data.yaml file for YOLOv8 training
+
+    Args:
+        dataset_dir: Path to dataset (contains train/ and val/ folders)
+        signs_pngs_dir: Path to transparent PNGs (to extract class names)
+    """
+
+    print("\n" + "=" * 70)
+    print("CREATING data.yaml")
+    print("=" * 70)
+
+    # Get class names from PNG filenames
+    png_files = sorted(list(Path(signs_pngs_dir).glob('*.png')))
+    class_names = [f.stem for f in png_files]
+
+    print(f"✅ Found {len(class_names)} classes")
+    print(f"\nFirst 10 classes:")
+    for i, name in enumerate(class_names[:10]):
+        print(f"  {i}: {name}")
+
+    if len(class_names) > 10:
+        print(f"  ...")
+        print(f"  {len(class_names)-1}: {class_names[-1]}")
+
+    # Create data.yaml content
+    data_yaml = {
+        'path': str(Path(dataset_dir).absolute()),  # Root directory
+        'train': 'train/images',  # Training images
+        'val': 'val/images',      # Validation images
+        'nc': len(class_names),   # Number of classes
+        'names': class_names      # Class names
+    }
+
+    # Save data.yaml
+    yaml_path = Path(dataset_dir) / 'data.yaml'
+    with open(yaml_path, 'w') as f:
+        yaml.dump(data_yaml, f, default_flow_style=False, sort_keys=False)
+
+    print(f"\n✅ data.yaml created at: {yaml_path}")
+
+    return str(yaml_path)
+
+
+def train_yolov8_augmented(
     data_yaml_path,
     model_size='n',
-    epochs=50,
+    epochs=100,
     imgsz=640,
     batch_size=16,
     device='0',
     project='runs/train',
-    name='mtsd_no_other',
+    name='augmented_traffic_signs',
     resume=False
 ):
     """
-    Train YOLOv8 model on MTSD dataset
+    Train YOLOv8 model on augmented dataset
 
     Args:
         data_yaml_path: Path to data.yaml file
@@ -33,8 +162,8 @@ def train_yolov8_mtsd(
         resume: Resume training from last checkpoint
     """
 
-    print("=" * 70)
-    print("YOLOv8 Training - MTSD Traffic Sign Detection")
+    print("\n" + "=" * 70)
+    print("YOLOv8 Training - Augmented Traffic Sign Detection")
     print("=" * 70)
 
     # Verify data.yaml exists
@@ -67,21 +196,25 @@ def train_yolov8_mtsd(
         name=name,
         resume=resume,
 
+        # Windows compatibility
+        rect=False,      # Disable rectangular training (causes multiprocessing issues)
+        cache=False,     # Disable caching (reduces memory pressure)
+
         # Training hyperparameters (optimized for traffic signs)
         patience=50,
         save=True,
         save_period=10,
 
-        # Augmentation
-        hsv_h=0.015,
-        hsv_s=0.7,
-        hsv_v=0.4,
-        degrees=15.0,
-        translate=0.2,
-        scale=0.5,
-        fliplr=0.0,
-        mosaic=1.0,
-        mixup=0.2,
+        # Augmentation (REDUCED - our dataset is already augmented!)
+        hsv_h=0.01,      # Minimal - we want to preserve colors
+        hsv_s=0.3,       # Reduced - already have color variation
+        hsv_v=0.2,       # Reduced - already have brightness variation
+        degrees=5.0,     # Reduced - already have rotation
+        translate=0.1,   # Reduced - already have position variation
+        scale=0.3,       # Reduced - already have scale variation
+        fliplr=0.0,      # NO flip - traffic signs shouldn't be flipped!
+        mosaic=0.5,      # Reduced - we have multi-sign images
+        mixup=0.0,       # Disabled - can mess up sign colors
 
         # Optimization
         optimizer='auto',
@@ -99,8 +232,8 @@ def train_yolov8_mtsd(
 
         # Other
         verbose=True,
-        workers=8,
-        dropout=0.2,
+        workers=0,       # Single-threaded (fixes Windows memory errors)
+        dropout=0.0,     # No dropout - we have enough data
         exist_ok=True,
     )
 
@@ -133,34 +266,66 @@ def main():
     Main training function
     """
 
-    # CONFIGURATION - UPDATE THIS PATH
-    data_yaml_path = r"D:\canadian-traffic-signs\data.yaml"
+    print("\n🚦 Augmented Traffic Sign Detection - YOLOv8 Training")
+    print("=" * 70)
 
-    # Training configuration
+    # STEP 1: Get paths
+    print("\n📋 STEP 1: Setup")
+    dataset_dir = input("Path to your augmented dataset: ").strip() or r"D:\color_perfect_dataset"
+    signs_pngs_dir = input("Path to your transparent PNGs: ").strip() or r"D:\perfect_signs_png_transparent"
+
+    if not os.path.exists(dataset_dir):
+        print(f"❌ Dataset directory not found: {dataset_dir}")
+        return
+
+    if not os.path.exists(signs_pngs_dir):
+        print(f"❌ Signs directory not found: {signs_pngs_dir}")
+        return
+
+    # STEP 2: Check if already split
+    print("\n📋 STEP 2: Dataset Split")
+    train_dir = Path(dataset_dir) / 'train'
+    val_dir = Path(dataset_dir) / 'val'
+
+    if train_dir.exists() and val_dir.exists():
+        print("✅ Dataset already split into train/val")
+    else:
+        print("📊 Splitting dataset into train (80%) and val (20%)...")
+        if not split_dataset(dataset_dir, train_ratio=0.8):
+            print("❌ Failed to split dataset")
+            return
+
+    # STEP 3: Create data.yaml
+    print("\n📋 STEP 3: Create data.yaml")
+    data_yaml_path = Path(dataset_dir) / 'data.yaml'
+
+    if data_yaml_path.exists():
+        print(f"✅ data.yaml already exists: {data_yaml_path}")
+        recreate = input("Recreate? (y/n): ").strip().lower()
+        if recreate == 'y':
+            data_yaml_path = create_data_yaml(dataset_dir, signs_pngs_dir)
+    else:
+        data_yaml_path = create_data_yaml(dataset_dir, signs_pngs_dir)
+
+    # STEP 4: Training configuration
+    print("\n📋 STEP 4: Training Configuration")
+
     config = {
-        'data_yaml_path': data_yaml_path,
-        'model_size': 'n',      # Options: 'n', 's', 'm', 'l', 'x'
-        'epochs': 100,          # Number of training epochs
-        'imgsz': 640,           # Image size
-        'batch_size': 8,       # Batch size (reduce if OOM errors)
-        'device': '0',          # '0' for GPU, 'cpu' for CPU
-        'project': 'runs/train',
-        'name': 'canadian_signs_200',
+        'data_yaml_path': str(data_yaml_path),
+        'model_size': input("Model size (n/s/m/l/x, default 'n'): ").strip() or 'n',
+        'epochs': int(input("Epochs (default 100): ").strip() or '100'),
+        'batch_size': int(input("Batch size (default 16): ").strip() or '16'),
+        'device': '0',  # GPU
+        'project': r'D:\ObjectDetection\runs\train',  # Force D drive!
+        'name': input("Model name (default 'augmented_signs'): ").strip() or 'augmented_signs',
     }
 
-    print("\n🚦 MTSD Traffic Sign Detection - YOLOv8 Training")
+    print("\n" + "=" * 70)
+    print("📋 Final Configuration:")
     print("=" * 70)
-    print("\n📋 Configuration:")
     for key, value in config.items():
         print(f"  {key}: {value}")
     print("=" * 70)
-
-    # Verify data.yaml exists
-    if not os.path.exists(config['data_yaml_path']):
-        print(f"\n❌ Error: data.yaml not found!")
-        print(f"Expected location: {config['data_yaml_path']}")
-        print("\nMake sure you've run organize_yolo_dataset.py first!")
-        return
 
     # Ask for confirmation
     print("\n⚠️  Training will start with the above configuration.")
@@ -171,8 +336,9 @@ def main():
         print("Training cancelled.")
         return
 
-    # Start training
-    best_model = train_yolov8_mtsd(**config)
+    # STEP 5: Start training
+    print("\n📋 STEP 5: Training")
+    best_model = train_yolov8_augmented(**config)
 
     if best_model:
         print("\n" + "=" * 70)
@@ -181,17 +347,23 @@ def main():
         print(f"\n📍 Your trained model: {best_model}")
         print("\n📝 Next steps:")
         print("  1. Test on video: python test_video.py")
-        print("  2. Export model: yolo export model={} format=onnx".format(best_model))
+        print("  2. Test on images: python test_images.py")
+        print(f"  3. Export model: yolo export model={best_model} format=onnx")
+        print("\n💡 Model saved with name: " + config['name'])
 
 
 if __name__ == "__main__":
+    # Windows multiprocessing fix - MUST be at top level
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     # Install required packages if needed
     try:
         from ultralytics import YOLO
     except ImportError:
         print("Installing ultralytics (YOLOv8)...")
         import subprocess
-        subprocess.check_call(["pip", "install", "ultralytics"])
+        subprocess.check_call(["pip", "install", "ultralytics", "--break-system-packages"])
         print("✓ Installation complete! Please run the script again.")
         exit(0)
 

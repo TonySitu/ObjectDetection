@@ -177,7 +177,7 @@ def main():
     # CONFIGURATION - UPDATE THESE PATHS
 
     # Path to your trained model
-    model_path = r"D:\ObjectDetection\runs\models\best.pt"
+    model_path = r"C:\Users\Tony\Desktop\ObjectDetection\runs\detect\runs\train\prayer6\weights\best.pt"
 
     # Path to your test video
     video_path = r"C:\Users\Tony\Downloads\airport highway.mp4"
